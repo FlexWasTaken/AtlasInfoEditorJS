@@ -1,0 +1,508 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+		body {
+			font-family: 'Roboto';
+			font-size: 22px;
+			margin: 0;
+			background:#252525;
+			color:#fff;
+		}
+		#containerParent {
+			display: flex;
+			width: 100vw;
+			height: 100vh;
+		}
+        #container {
+            position: relative;
+            border: 1px solid black;
+            width: 70vw;
+            height: 70vh;
+            margin: auto;
+            overflow: hidden;
+            cursor: grab;
+        }
+		.FirstTime {
+			animation-name: FirstTimeAnim;
+			animation-duration: 2s;
+		}
+		@keyframes FirstTimeAnim {
+			0%   {opacity:0;}
+			100% {opacity:1;}
+		}
+        .grid {
+            position: absolute;
+            top: 0;
+            left: 0;
+        }
+        .grid-cell {
+            position: absolute;
+            box-sizing: border-box;
+            border: 1px solid #858585;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            text-align: center;
+            overflow: hidden;
+            white-space: nowrap;
+        }
+		.grid-cell span {
+			display: inline-block;
+			word-wrap: break-word;  
+			white-space: normal;    
+			text-align: center;     
+		}
+        .filled-cell {
+            color: white;
+            z-index: 999;
+        }
+        .empty-cell {
+            background-color: #0c0c0c;
+            color: #b1afaf;
+            user-select: none;
+        }
+        .red-cell {
+            background-color: red;
+            color: black;
+			z-index:999;
+			animation-name: Flash;
+			animation-duration: .5s;
+			animation-iteration-count: infinite;
+        }
+		@keyframes Flash {
+			0%   {background-color: red;}
+			80%  {background-color: red;}
+			100% {background-color: white;}
+		}
+        .gray-cell {
+            background-color: gray;
+            color: white;
+        }
+		
+        .modal {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: #2b2b2b;
+            border: 1px solid black;
+            padding: 20px;
+            z-index: 1000;
+        }
+        .overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.5);
+            z-index: 999;
+        }
+    </style>
+	<script src="https://cdnjs.cloudflare.com/ajax/libs/animejs/3.2.2/anime.min.js" integrity="sha512-aNMyYYxdIxIaot0Y1/PLuEu3eipGCmsEUBrUq+7aVyPGMFH8z0eTP0tkqAvv34fzN6z+201d3T8HPb1svWSKHQ==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+</head>
+<body>
+	<div id="Lazy" style="width:100vw;height:100vh;display:flex;position:fixed;">
+		<div style="transform:scale(1.5);display:inline-flex;flex-direction:column;gap:5px;background:#111111;margin:auto;width:fit-content;height:fit-content;padding:20px;border-radius:5px;">
+			<span>AtlasInfo Editor</span>
+			<div><input type="number" value="256" placeholder="Unit Size"/><span style="font-size:x-small"> Don't change if you don't know</span></div>
+			<input type="file" id="file"/>
+		</div>
+	</div>
+	<div id="containerParent" style="display:none;">
+		<div style="position:absolute;top:calc(15vh + 15px);left:calc(15vw + 15px);z-index:9999;display:flex;flex-direction:column;background:#ffffff8a;padding:15px;border-radius:5px;">
+			<span id="Zoom" style="color:black;">Zoom: 50%</span>
+			<button onclick="exportData();">Export</button>
+		</div>
+		<div id="container"></div>
+	</div>
+
+    <script>
+        let dataList = []; 
+        const unitSize = 256;
+        let unitScale = 0.50;
+        let widthMax = 0;
+        let heightMax = 0;
+        let isDragging = false;
+        let dragStartX = 0;
+        let dragStartY = 0;
+        let gridOffsetX = 0;
+        let gridOffsetY = 0;
+        let needsRedraw = true;
+
+        const cellColors = new Map();
+        const container = document.getElementById('container');
+        const grid = document.createElement('div');
+        grid.classList.add('grid');
+        container.appendChild(grid);
+
+        function getCoordString(x, y) {
+            return `${x},${y}`;
+        }
+
+        function getRandomColor() {
+            const letters = '0123456789ABCDEF';
+            let color = '#';
+            for (let i = 0; i < 6; i++) {
+                color += letters[Math.floor(Math.random() * 16)];
+            }
+            return color;
+        }
+
+        function loadFile(file) {
+            const reader = new FileReader();
+            reader.onload = function () {
+                dataList = [];
+                const lines = this.result.split('\n');
+                for (let line of lines) {
+                    if (!line.trim()) continue; 
+                    const cur = line.split(/\s+/);
+                    if (cur.length < 5) {
+                        console.log('Malformed line:', line);
+                        continue;
+                    }
+
+                    const dataSet = {
+                        map: cur[0],
+                        base_x: cur[1] / 100,
+                        base_y: cur[2] / 100,
+                        size_x: cur[3] * unitSize,
+                        size_y: cur[4] * unitSize,
+                    };
+
+                    dataList.push(dataSet);
+                    widthMax = Math.max(widthMax, dataSet.base_x + dataSet.size_x);
+                    heightMax = Math.max(heightMax, dataSet.base_y + dataSet.size_y);
+                }
+
+                console.log('Data loaded:', dataList);
+
+				const box = document.getElementById('Lazy');
+				anime({
+					targets: box,
+					top: 1500 + 'px', 
+					duration: 1000, 
+					easing: 'easeOutQuad',
+					complete: function(anim) {
+						document.getElementById("Lazy").setAttribute('style','display:none;');
+						document.getElementById("container").classList.add("FirstTime");
+						document.getElementById("containerParent").removeAttribute('style');
+					}
+				});
+
+                needsRedraw = true;
+            };
+            reader.readAsText(file);
+        }
+		function exportData() {
+			if (!dataList || dataList.length === 0) {
+				alert("No data to export!");
+				return;
+			}
+
+			let content = "";
+			dataList.forEach((dataSet) => {
+				const map = dataSet.map;
+				const base_x = Math.round(dataSet.base_x * 100); 
+				const base_y = Math.round(dataSet.base_y * 100); 
+				const size_x = Math.round(dataSet.size_x / unitSize);       
+				const size_y = Math.round(dataSet.size_y / unitSize);       
+
+				content += `${map} ${base_x} ${base_y} ${size_x} ${size_y}\n`;
+			});
+
+			const blob = new Blob([content], { type: "text/plain" });
+			const link = document.createElement("a");
+			link.href = URL.createObjectURL(blob);
+			link.download = "atlasinfo.txt";
+			link.click();
+		}
+		function flashNewCell(newCell) {
+			const coordKey = getCoordString(newCell.base_x, newCell.base_y);
+
+			const cellElement = createCell(
+				newCell.base_x * unitScale + gridOffsetX,
+				newCell.base_y * unitScale + gridOffsetY,
+				newCell.size_x * unitScale,
+				newCell.size_y * unitScale,
+				newCell.map,
+				'red',
+				coordKey
+			);
+
+			grid.appendChild(cellElement);
+
+			setTimeout(() => {
+				cellElement.classList.remove('red-cell');
+				cellElement.classList.add('gray-cell');
+			}, 1000); 
+		}
+		function createCell(x, y, width, height, text, type, coordKey) {
+			const cell = document.createElement('div');
+			cell.classList.add('grid-cell');
+			if (type === 'filled') {
+				cell.classList.add('filled-cell');
+				if (!cellColors.has(coordKey)) {
+					cellColors.set(coordKey, getRandomColor());
+				}
+				cell.style.backgroundColor = cellColors.get(coordKey); 
+			} else if (type === 'red') {
+				cell.classList.add('red-cell');
+				cell.classList.add('flash');
+			} else if (type === 'gray') {
+				cell.classList.add('gray-cell');
+			} else {
+				cell.classList.add('empty-cell');
+			}
+
+			cell.style.left = `${x}px`;
+			cell.style.top = `${y}px`;
+			cell.style.width = `${width}px`;
+			cell.style.height = `${height}px`;
+
+			const span = document.createElement('span');
+			span.textContent = text;
+
+			const fontSize = Math.min(width, height) / 8; 
+			span.style.display = 'inline-block';
+			span.style.fontSize = `${fontSize}px`;
+			span.style.wordWrap = 'break-word'; 
+			span.style.whiteSpace = 'normal'; 
+			span.style.lineHeight = `${fontSize * 1.2}px`; 
+			span.style.width = '100%'; 
+			span.style.textAlign = 'center';
+
+			cell.appendChild(span); 
+
+			return cell;
+		}
+
+        function drawGrid() {
+            if (!needsRedraw) return; 
+            needsRedraw = false;
+
+            grid.innerHTML = ''; 
+
+            const containerWidth = container.offsetWidth;
+            const containerHeight = container.offsetHeight;
+
+            const startX = Math.floor(-gridOffsetX / (unitSize * unitScale));
+            const endX = Math.ceil((containerWidth - gridOffsetX) / (unitSize * unitScale));
+            const startY = Math.floor(-gridOffsetY / (unitSize * unitScale));
+            const endY = Math.ceil((containerHeight - gridOffsetY) / (unitSize * unitScale));
+
+            const filledCells = new Set();
+            if (dataList) {
+				for (const dataSet of dataList) {
+					const coordKey = getCoordString(dataSet.base_x, dataSet.base_y);
+					const cell = createCell(
+						dataSet.base_x * unitScale + gridOffsetX, 
+						dataSet.base_y * unitScale + gridOffsetY, 
+						dataSet.size_x * unitScale,               
+						dataSet.size_y * unitScale,               
+						dataSet.map,                              
+						(typeof dataSet.new != "undefined" ? "red" : 'filled'),
+						coordKey
+					);
+					grid.appendChild(cell);
+				}
+			}
+
+            for (let y = startY; y <= endY; y++) {
+                for (let x = startX; x <= endX; x++) {
+                    const coordKey = getCoordString(x * unitSize, y * unitSize);
+                    if (!filledCells.has(coordKey)) {
+                        const cell = createCell(
+                            x * unitSize * unitScale + gridOffsetX,
+                            y * unitSize * unitScale + gridOffsetY,
+                            unitSize * unitScale,
+                            unitSize * unitScale,
+                            getCoordString(x * unitSize, y * unitSize),
+                            'empty',
+                            coordKey
+                        );
+                        grid.appendChild(cell);
+                    }
+                }
+            }
+        }
+
+        function createModal(anchorX, anchorY) {
+			if (document.querySelector('.modal')) return; 
+
+			const overlay = document.createElement('div');
+			overlay.classList.add('overlay');
+			document.body.appendChild(overlay);
+
+			const modal = document.createElement('div');
+			modal.classList.add('modal');
+			modal.innerHTML = `
+				<label>Width: <input type="number" id="width" min="1" value="1"></label><br>
+				<label>Height: <input type="number" id="height" min="1" value="1"></label><br>
+				<label>Text: <input type="text" id="text" placeholder="metin2_map_..."></label><br>
+				<button id="add">Add</button>
+				<button id="cancel">Cancel</button>
+			`;
+			document.body.appendChild(modal);
+
+			document.getElementById('cancel').onclick = () => {
+				document.body.removeChild(modal);
+				document.body.removeChild(overlay);
+			};
+
+			document.getElementById('add').onclick = () => {
+				const width = parseInt(document.getElementById('width').value, 10);
+				const height = parseInt(document.getElementById('height').value, 10);
+				const text = document.getElementById('text').value.trim(); 
+
+				if (dataList.some(cell => cell.map === text)) {
+					alert(`Error: The text "${text}" already exists. Please choose a unique name.`);
+					return; 
+				}
+
+				if (validatePlacement(anchorX, anchorY, width, height)) {
+					const newCell = {
+						map: text,
+						base_x: anchorX * unitSize, 
+						base_y: anchorY * unitSize, 
+						size_x: width * unitSize,   
+						size_y: height * unitSize,  
+						new: true
+					};
+
+					dataList.push(newCell);
+
+					console.log('New cell added at anchor:', {
+						x: anchorX * unitSize,
+						y: anchorY * unitSize,
+						width: width * unitSize,
+						height: height * unitSize,
+						text,
+					});
+
+					needsRedraw = true;
+					flashNewCell(newCell);
+
+					document.body.removeChild(modal);
+					document.body.removeChild(overlay);
+				} else {
+					alert('Placement overlaps existing cells or exceeds boundaries. Try again.');
+				}
+			};
+		}
+
+        function validatePlacement(anchorX, anchorY, width, height) {
+			const baseX = anchorX * unitSize;
+			const baseY = anchorY * unitSize;
+			const sizeX = width * unitSize;
+			const sizeY = height * unitSize;
+
+			for (const cell of dataList) {
+				const cx = cell.base_x;
+				const cy = cell.base_y;
+				const cWidth = cell.size_x;
+				const cHeight = cell.size_y;
+
+				if (
+					baseX < cx + cWidth &&
+					baseX + sizeX > cx &&
+					baseY < cy + cHeight &&
+					baseY + sizeY > cy
+				) {
+					return false; 
+				}
+			}
+			return true; 
+		}
+
+        document.getElementById('file').addEventListener('change', (event) => {
+            const file = event.target.files[0];
+            if (file) {
+                loadFile(file);
+            }
+        });
+		function onMouseDown(event) {
+			isDragging = true;
+			dragStartX = event.clientX;
+			dragStartY = event.clientY;
+			container.style.cursor = 'grabbing'; 
+			event.preventDefault(); 
+		}
+		function onMouseMove(event) {
+			if (!isDragging) return;
+			const deltaX = event.clientX - dragStartX;
+			const deltaY = event.clientY - dragStartY;
+
+			gridOffsetX += deltaX;
+			gridOffsetY += deltaY;
+
+			dragStartX = event.clientX;
+			dragStartY = event.clientY;
+
+			needsRedraw = true; 
+		}
+		function onMouseUp(event) {
+			isDragging = false;
+			container.style.cursor = 'grab'; 
+		}
+        container.addEventListener('mousedown', onMouseDown);
+        document.addEventListener('mousemove', onMouseMove);
+        document.addEventListener('mouseup', onMouseUp);
+        container.addEventListener('click', (event) => {
+            if (isDragging) return;
+            const rect = container.getBoundingClientRect();
+            const x = Math.floor((event.clientX - rect.left - gridOffsetX) / (unitSize * unitScale));
+            const y = Math.floor((event.clientY - rect.top - gridOffsetY) / (unitSize * unitScale));
+            createModal(x, y);
+        });
+		let previousDataListSnapshot = JSON.stringify(dataList); 
+		function onMouseWheel(event) {
+			const rect = container.getBoundingClientRect();
+			if (
+				event.clientX >= rect.left &&
+				event.clientX <= rect.right &&
+				event.clientY >= rect.top &&
+				event.clientY <= rect.bottom
+			) {
+
+				if (!event.ctrlKey) return;
+				event.preventDefault();
+
+				const mouseX = event.clientX - rect.left;
+				const mouseY = event.clientY - rect.top;
+
+				const oldScale = unitScale;
+				const zoomFactor = 0.05;
+
+				if (event.deltaY < 0) {
+					unitScale = Math.min(unitScale + zoomFactor, 1);
+				} else {
+					unitScale = Math.max(unitScale - zoomFactor, 0.15);
+				}
+				document.getElementById("Zoom").innerHTML = "Zoom: " + parseInt(unitScale * 100) + "%";
+				gridOffsetX -= (mouseX - gridOffsetX) * (unitScale / oldScale - 1);
+				gridOffsetY -= (mouseY - gridOffsetY) * (unitScale / oldScale - 1);
+
+				needsRedraw = true;
+			}
+		}
+		container.addEventListener('wheel', onMouseWheel);
+        function animationLoop() {
+			const currentDataListSnapshot = JSON.stringify(dataList);
+
+			if (currentDataListSnapshot !== previousDataListSnapshot) {
+				console.log('Change detected in dataList. Redrawing grid...');
+				needsRedraw = true; 
+				previousDataListSnapshot = currentDataListSnapshot; 
+			}
+            drawGrid();
+            requestAnimationFrame(animationLoop);
+        }
+
+        animationLoop();
+    </script>
+</body>
+</html>
