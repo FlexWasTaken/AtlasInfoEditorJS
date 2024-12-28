@@ -1,0 +1,2 @@
+# AtlasInfoEditorJS
+ Title explains itself
